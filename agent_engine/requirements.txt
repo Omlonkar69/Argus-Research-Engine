@@ -1,0 +1,4 @@
+google-genai>=2.4.0
+langgraph>=0.1.0
+gTTS>=2.5.1
+pydantic>=2.0.0

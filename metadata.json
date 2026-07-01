@@ -1,0 +1,6 @@
+{
+  "name": "Argus Research Engine",
+  "description": "Argus: A Decoupled Multi-Agent Research Engine Utilizing LangGraph, Node.js, and React.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
