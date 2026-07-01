@@ -372,6 +372,12 @@ export default function AuthPage({ onAuthSuccess }: AuthPageProps) {
               </button>
             </form>
 
+            {!isSignUp && (
+              <div className="mt-4 p-3 bg-cyan-950/20 border border-cyan-900/40 rounded text-center text-[11px] font-mono text-cyan-400">
+                Demo Login: <span className="text-white">abcd@gmail.com</span> | Password: <span className="text-white">123456</span>
+              </div>
+            )}
+
             {/* Toggle option */}
             <div className="text-center mt-6">
               <button

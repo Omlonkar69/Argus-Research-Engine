@@ -34,17 +34,34 @@ function loadUsersDb(): UserDb {
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true });
     }
-    if (!fs.existsSync(USERS_DB_PATH)) {
-      fs.writeFileSync(USERS_DB_PATH, JSON.stringify({ users: {} }, null, 2));
-      return { users: {} };
+    let db: UserDb = { users: {} };
+    if (fs.existsSync(USERS_DB_PATH)) {
+      const data = fs.readFileSync(USERS_DB_PATH, "utf8");
+      db = JSON.parse(data);
     }
-    const data = fs.readFileSync(USERS_DB_PATH, "utf8");
-    return JSON.parse(data);
+    
+    // Auto-seed sample credentials if not present
+    const sampleEmail = "abcd@gmail.com";
+    if (!db.users || !db.users[sampleEmail]) {
+      db.users = db.users || {};
+      db.users[sampleEmail] = {
+        uid: "user-a648592d3b312b52",
+        email: sampleEmail,
+        displayName: "User",
+        passwordHash: "994a80f47db4f82be2535713f514d3b7793e880bae73328f124d82117f819c0e7629efe2aa4e298b3835f61847b203e41bf38e47f3a9aaffecc237018ec4763d",
+        salt: "c870c4a2141f840620600e19971082fc",
+        enrolledFactors: []
+      };
+      fs.writeFileSync(USERS_DB_PATH, JSON.stringify(db, null, 2));
+    }
+    
+    return db;
   } catch (err) {
     console.error("Failed to load users db:", err);
     return { users: {} };
   }
 }
+
 
 function saveUsersDb(db: UserDb) {
   try {
