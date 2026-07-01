@@ -1,9 +1,5 @@
 # Argus Research Assistant 2.0
 
-<div align="center">
-  <img src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" alt="Argus Research Assistant Banner" width="100%" style="border-radius: 8px;" />
-</div>
-
 ## 🔍 Overview
 
 Argus Research Assistant 2.0
