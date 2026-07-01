@@ -977,11 +977,16 @@ app.get("/api/research/stream", authenticateUser, async (req: any, res) => {
         try {
           const fallbackRes = await callGeminiWithRetry({
             model: "gemini-3.5-flash",
-            contents: `You are an expert academic research simulator. Under strict key constraints, you must simulate the authoritative research results.
-Generate at least 15 high-fidelity primary source web links (with real domain styles like arxiv.org, nature.com, github.com, wikipedia.org, etc.) and titles for the query: "${currentQuery}". 
+            contents: `You are an expert academic research simulator.
+Generate at least 15 high-fidelity primary source research titles on the query: "${currentQuery}".
+For each title, construct a valid working link to search Google Scholar or arXiv for that specific paper.
+You MUST format the URL exactly like one of these working search URLs to avoid 404 errors:
+- "https://scholar.google.com/scholar?q=Title+Of+The+Paper+URL+Encoded"
+- "https://arxiv.org/search/?query=Title+Of+The+Paper+URL+Encoded&searchtype=all"
+Do not generate fake specific document paths (like /abs/2402.example) which result in 404 errors.
 Respond strictly in JSON array format:
 [
-  { "title": "Authoritative Document or Paper Title", "url": "https://arxiv.org/abs/2402.example or key resource URL for the topic" }
+  { "title": "Authoritative Document or Paper Title", "url": "https://scholar.google.com/scholar?q=..." }
 ]`,
             config: {
               responseMimeType: "application/json",
@@ -1007,10 +1012,13 @@ Respond strictly in JSON array format:
             try {
               const rawGroqRes = await generateContentWithGroq(
                 `You are a researcher simulator. Compile at least 15 distinct highly authoritative research breakthroughs, technical facts, and academic citations for: "${currentQuery}". 
-For each fact and node, you MUST generate realistic primary source links matching domain patterns (e.g., arxiv.org, nature.com, github.com, docs.microsoft.com, etc.).
+For each paper and node, construct a valid working search link on Google Scholar or arXiv for that specific paper title to prevent 404 errors.
+Example URL patterns:
+- "https://scholar.google.com/scholar?q=Title+Of+The+Paper+URL+Encoded"
+- "https://arxiv.org/search/?query=Title+Of+The+Paper+URL+Encoded&searchtype=all"
 Respond in raw JSON array format matching this schema:
 [
-  { "title": "Authoritative paper title/doc", "url": "https://example.com/source_url" }
+  { "title": "Authoritative paper title/doc", "url": "https://scholar.google.com/scholar?q=..." }
 ]
 Output NO other text. Only JSON.`,
                 "You are a factual JSON-only compiler."
@@ -1034,10 +1042,13 @@ Output NO other text. Only JSON.`,
             try {
               const rawOpenRouterRes = await generateContentWithOpenRouter(
                 `You are a researcher simulator. Compile at least 15 distinct highly authoritative research breakthroughs, technical facts, and academic citations for: "${currentQuery}". 
-For each fact and node, you MUST generate realistic primary source links matching domain patterns (e.g., arxiv.org, nature.com, github.com, docs.microsoft.com, etc.).
+For each paper and node, construct a valid working search link on Google Scholar or arXiv for that specific paper title to prevent 404 errors.
+Example URL patterns:
+- "https://scholar.google.com/scholar?q=Title+Of+The+Paper+URL+Encoded"
+- "https://arxiv.org/search/?query=Title+Of+The+Paper+URL+Encoded&searchtype=all"
 Respond in raw JSON array format matching this schema:
 [
-  { "title": "Authoritative paper title/doc", "url": "https://example.com/source_url" }
+  { "title": "Authoritative paper title/doc", "url": "https://scholar.google.com/scholar?q=..." }
 ]
 Output NO other text. Only JSON.`,
                 "You are a factual JSON-only compiler."
@@ -1145,13 +1156,14 @@ Output NO other text. Only JSON.`,
         }
       }
     }
-    // If still less than 10, pad with supplemental research nodes
+    // If still less than 10, pad with supplemental research nodes linking to Google Scholar search results
     if (filteredResearch.length < 10) {
       const remainingCount = 10 - filteredResearch.length;
       for (let i = 1; i <= remainingCount; i++) {
+        const queryTerm = `${topic} research paper part ${i}`;
         filteredResearch.push({
-          title: `Supplemental Research Analysis Node ${i} on ${topic}`,
-          url: `https://arxiv.org/html/supplementary-node-${i}-${encodeURIComponent(topic.toLowerCase().replace(/ /g, "-"))}`
+          title: `Supplemental Academic Source: ${topic} (Node ${i})`,
+          url: `https://scholar.google.com/scholar?q=${encodeURIComponent(queryTerm)}`
         });
       }
     }
