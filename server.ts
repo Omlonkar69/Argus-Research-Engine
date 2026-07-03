@@ -149,20 +149,51 @@ process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception thrown:", error);
 });
 
-// Initialize Gemini SDK with User-Agent telemetry
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  console.warn("WARNING: GEMINI_API_KEY is not defined in the environment. Please configure it in your Secrets.");
+// Parse multiple API keys or fallback to singular keys
+const geminiKeys: string[] = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
+  .split(",")
+  .map(k => k.trim())
+  .filter(Boolean);
+
+const isGeminiKeyConfigured = geminiKeys.length > 0 && geminiKeys[0] !== "MOCK_KEY";
+
+
+const groqKeys: string[] = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "")
+  .split(",")
+  .map(k => k.trim())
+  .filter(Boolean);
+
+const openrouterKeys: string[] = (process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY || "")
+  .split(",")
+  .map(k => k.trim())
+  .filter(Boolean);
+
+if (geminiKeys.length === 0) {
+  console.warn("WARNING: No Gemini API keys found. Please configure GEMINI_API_KEYS or GEMINI_API_KEY.");
+}
+if (groqKeys.length === 0) {
+  console.warn("WARNING: No Groq API keys found. Please configure GROQ_API_KEYS or GROQ_API_KEY.");
+}
+if (openrouterKeys.length === 0) {
+  console.warn("WARNING: No OpenRouter API keys found. Please configure OPENROUTER_API_KEYS or OPENROUTER_API_KEY.");
 }
 
-const ai = new GoogleGenAI({
-  apiKey: apiKey || "MOCK_KEY",
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
+let activeGeminiKeyIndex = 0;
+let activeGroqKeyIndex = 0;
+let activeOpenRouterKeyIndex = 0;
+
+// Helper to get a GoogleGenAI client initialized with the currently active Gemini API key
+function getGeminiClient(): GoogleGenAI {
+  const key = geminiKeys[activeGeminiKeyIndex] || "MOCK_KEY";
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
     },
-  },
-});
+  });
+}
 
 // Helper to retry Gemini calls with exponential backoff on rate limits / quota exhaustion, with model fallbacks
 async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Promise<any> {
@@ -179,20 +210,27 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
     // Don't modify original params object
     const currentParams = { ...params, model: currentModel };
     
-    for (let i = 0; i < retries; i++) {
+    // Try at least as many times as we have keys plus extra retries
+    const maxAttempts = Math.max(retries, geminiKeys.length);
+    
+    for (let i = 0; i < maxAttempts; i++) {
       try {
-        console.log(`[Gemini SDK Request] Model: ${currentModel} | Attempt: ${i + 1}/${retries}`);
-        return await ai.models.generateContent(currentParams);
+        console.log(`[Gemini SDK Request] Model: ${currentModel} | Attempt: ${i + 1}/${maxAttempts}`);
+        const aiInstance = getGeminiClient();
+        return await aiInstance.models.generateContent(currentParams);
       } catch (err: any) {
         lastError = err;
         const errMsg = err.message || "";
         const errMsgLower = errMsg.toLowerCase();
         
-        // Retry on quota, rate limits, status 5xx, or transient networking issues (fetch failed, ECONNRESET, socket/headers timeouts, etc.)
-        const isRetryableError = 
+        // Check for quota or rate limits
+        const isQuotaOrRateLimit = 
           errMsg.includes("429") || 
           errMsgLower.includes("quota") || 
-          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("RESOURCE_EXHAUSTED");
+          
+        const isRetryableError = 
+          isQuotaOrRateLimit ||
           errMsgLower.includes("fetch failed") ||
           errMsgLower.includes("timeout") ||
           errMsgLower.includes("econnreset") ||
@@ -204,11 +242,25 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
           errMsgLower.includes("503") ||
           errMsgLower.includes("504");
         
-        if (isRetryableError && i < retries - 1) {
-          const waitTime = delay * Math.pow(2, i);
-          console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${retries})...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-          continue;
+        if (isRetryableError) {
+          let rotated = false;
+          if (isQuotaOrRateLimit && geminiKeys.length > 1) {
+            const oldIndex = activeGeminiKeyIndex;
+            activeGeminiKeyIndex = (activeGeminiKeyIndex + 1) % geminiKeys.length;
+            console.log(`[Gemini Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeGeminiKeyIndex}.`);
+            rotated = true;
+          }
+          if (i < maxAttempts - 1) {
+            // If we rotated to a new key, retry instantly. Otherwise wait with backoff.
+            const waitTime = rotated ? 0 : delay * Math.pow(2, i);
+            if (waitTime > 0) {
+              console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${maxAttempts})...`);
+              await new Promise((resolve) => setTimeout(resolve, waitTime));
+            } else {
+              console.log(`[Gemini Rotation] Retrying instantly with rotated key...`);
+            }
+            continue;
+          }
         }
         
         break; // If not a retryable error or we completed our retries, stop this model's retry loop and try the next fallback model
@@ -219,77 +271,142 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
   throw lastError;
 }
 
-
 // Helper: Call Groq API via standard JSON fetch
 async function generateContentWithGroq(prompt: string, systemInstruction?: string): Promise<string> {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey) {
-    throw new Error("GROQ_API_KEY environment variable is not defined.");
-  }
-
   const messages: any[] = [];
   if (systemInstruction) {
     messages.push({ role: "system", content: systemInstruction });
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${groqKey}`
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      messages: messages,
-      temperature: 0.2
-    })
-  });
+  const maxAttempts = Math.max(3, groqKeys.length);
+  let lastError: any = null;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Groq API returned error status: ${response.status} - ${errText}`);
+  for (let i = 0; i < maxAttempts; i++) {
+    const groqKey = groqKeys[activeGroqKeyIndex];
+    if (!groqKey) {
+      throw new Error("No GROQ API keys available.");
+    }
+
+    try {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: messages,
+          temperature: 0.2
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        const error = new Error(`Groq API returned error status: ${response.status} - ${errText}`);
+        (error as any).status = response.status;
+        throw error;
+      }
+
+      const data: any = await response.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err: any) {
+      lastError = err;
+      const isQuotaOrRateLimit = err.status === 429 || (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("quota")));
+      
+      let rotated = false;
+      if (isQuotaOrRateLimit && groqKeys.length > 1) {
+        const oldIndex = activeGroqKeyIndex;
+        activeGroqKeyIndex = (activeGroqKeyIndex + 1) % groqKeys.length;
+        console.log(`[Groq Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeGroqKeyIndex}.`);
+        rotated = true;
+      }
+      
+      if (i < maxAttempts - 1) {
+        const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
+        if (waitTime > 0) {
+          console.warn(`[Groq SDK Warning] Rate limit hit. Retrying in ${waitTime}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        } else {
+          console.log(`[Groq Rotation] Retrying instantly with rotated key...`);
+        }
+        continue;
+      }
+    }
   }
-
-  const data: any = await response.json();
-  return data.choices?.[0]?.message?.content || "";
+  
+  throw lastError;
 }
 
 // Helper: Call OpenRouter API via standard JSON fetch
 async function generateContentWithOpenRouter(prompt: string, systemInstruction?: string): Promise<string> {
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (!openrouterKey) {
-    throw new Error("OPENROUTER_API_KEY environment variable is not defined.");
-  }
-
   const messages: any[] = [];
   if (systemInstruction) {
     messages.push({ role: "system", content: systemInstruction });
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${openrouterKey}`,
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "Argus Research Assistant"
-    },
-    body: JSON.stringify({
-      model: "meta-llama/llama-3.3-70b-instruct",
-      messages: messages,
-      temperature: 0.2
-    })
-  });
+  const maxAttempts = Math.max(3, openrouterKeys.length);
+  let lastError: any = null;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenRouter API returned error status: ${response.status} - ${errText}`);
+  for (let i = 0; i < maxAttempts; i++) {
+    const openrouterKey = openrouterKeys[activeOpenRouterKeyIndex];
+    if (!openrouterKey) {
+      throw new Error("No OpenRouter API keys available.");
+    }
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openrouterKey}`,
+          "HTTP-Referer": "http://localhost:3000",
+          "X-Title": "Argus Research Assistant"
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-3.3-70b-instruct",
+          messages: messages,
+          temperature: 0.2
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        const error = new Error(`OpenRouter API returned error status: ${response.status} - ${errText}`);
+        (error as any).status = response.status;
+        throw error;
+      }
+
+      const data: any = await response.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err: any) {
+      lastError = err;
+      const isQuotaOrRateLimit = err.status === 429 || (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("quota")));
+      
+      let rotated = false;
+      if (isQuotaOrRateLimit && openrouterKeys.length > 1) {
+        const oldIndex = activeOpenRouterKeyIndex;
+        activeOpenRouterKeyIndex = (activeOpenRouterKeyIndex + 1) % openrouterKeys.length;
+        console.log(`[OpenRouter Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeOpenRouterKeyIndex}.`);
+        rotated = true;
+      }
+      
+      if (i < maxAttempts - 1) {
+        const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
+        if (waitTime > 0) {
+          console.warn(`[OpenRouter SDK Warning] Rate limit hit. Retrying in ${waitTime}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        } else {
+          console.log(`[OpenRouter Rotation] Retrying instantly with rotated key...`);
+        }
+        continue;
+      }
+    }
   }
-
-  const data: any = await response.json();
-  return data.choices?.[0]?.message?.content || "";
+  
+  throw lastError;
 }
 
 
@@ -610,7 +727,7 @@ app.get("/api/research/suggested-topics", async (req, res) => {
     "Perovskite Silicon Tandem Photovoltaics Efficiency Limit"
   ];
 
-  if (!apiKey || apiKey === "MOCK_KEY") {
+  if (!isGeminiKeyConfigured) {
     console.log("[Suggested Topics API] Using local fallback topics.");
     return res.json(fallbacks);
   }
@@ -922,12 +1039,171 @@ Argus Synthesis Engine, "Empirical Review on ${topic}," Argus Science Portfolio,
   return { finalReport, briefingSummary };
 }
 
+// Helper: Throttle concurrent execution of async tasks
+async function limitConcurrency<T>(
+  factories: (() => Promise<T>)[],
+  limit: number
+): Promise<T[]> {
+  const results: T[] = new Array(factories.length);
+  let index = 0;
+  
+  async function worker() {
+    while (index < factories.length) {
+      const currentIndex = index++;
+      try {
+        results[currentIndex] = await factories[currentIndex]();
+      } catch (err) {
+        console.error(`Error executing task at index ${currentIndex}:`, err);
+        throw err;
+      }
+    }
+  }
+  
+  const workers = Array.from({ length: Math.min(limit, factories.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+// Helper: Check if a URL is accessible and does not return 404
+async function isUrlAccessible(url: string): Promise<boolean> {
+  if (!url || !url.startsWith("http")) return false;
+  
+  // Whitelist common, highly reliable academic/search/general domains to bypass fetching
+  const safeDomains = [
+    "scholar.google.com",
+    "arxiv.org/search",
+    "wikipedia.org",
+    "github.com",
+    "google.com"
+  ];
+  
+  try {
+    const parsed = new URL(url);
+    if (safeDomains.some(domain => parsed.hostname.includes(domain))) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+
+    const res = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    
+    // Status 404 is definitely a broken page
+    if (res.status === 404) {
+      return false;
+    }
+    return true;
+  } catch (err) {
+    // Fallback to a fast GET if HEAD is rejected or blocked
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 2500); // 2.5-second timeout
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Range": "bytes=0-1024"
+        },
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      return res.status !== 404;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Helper: Verify all source URLs, mapping inaccessible ones to Google Scholar search queries
+async function verifyAndCorrectSources(
+  sources: { title: string; url: string }[]
+): Promise<{ title: string; url: string }[]> {
+  console.log(`[URL Verification] Initiating access audits on ${sources.length} sources...`);
+  const verifyFactories = sources.map((src) => async () => {
+    const isAccessible = await isUrlAccessible(src.url);
+    if (!isAccessible) {
+      const fallbackUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(src.title)}`;
+      console.log(`[URL Verification] URL "${src.url}" is invalid or returned 404. Mapping to fallback: "${fallbackUrl}"`);
+      return {
+        title: src.title,
+        url: fallbackUrl
+      };
+    }
+    return src;
+  });
+  
+  return await limitConcurrency(verifyFactories, 5);
+}
+
+interface ResearchRun {
+  userId: string;
+  timestamp: number;
+}
+
+let globalRuns: ResearchRun[] = [];
+
 // 4. Server-Sent Events (SSE) Stream for Research Agent Workflows
 app.get("/api/research/stream", authenticateUser, async (req: any, res) => {
   const topic = req.query.topic as string;
   if (!topic) {
     return res.status(400).send("Missing query parameter: topic");
   }
+
+  // Rate Limiting check (Adaptive Rush-based Rate Limiter)
+  const userId = req.userId || req.ip || "unknown";
+  const rushThreshold = parseInt(process.env.RUSH_USER_THRESHOLD || "3", 10);
+  const limitHour = parseInt(process.env.RESEARCH_LIMIT_HOUR || "3", 10);
+  const limitDay = parseInt(process.env.RESEARCH_LIMIT_DAY || "10", 10);
+  
+  const now = Date.now();
+  const oneHourAgo = now - 60 * 60 * 1000;
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  
+  // Clean up global runs older than 24 hours
+  globalRuns = globalRuns.filter(r => r.timestamp > oneDayAgo);
+  
+  // Find runs in the last hour
+  const runsInLastHour = globalRuns.filter(r => r.timestamp > oneHourAgo);
+  // Count distinct user IDs in the last hour
+  const distinctUsersInLastHour = new Set(runsInLastHour.map(r => r.userId));
+  
+  // If the count of distinct active users in the last hour is >= rushThreshold, we enforce individual rate limits
+  const isRushMode = distinctUsersInLastHour.size >= rushThreshold;
+  
+  if (isRushMode) {
+    const userRunsInLastHour = runsInLastHour.filter(r => r.userId === userId).length;
+    const userRunsInLastDay = globalRuns.filter(r => r.userId === userId).length;
+    
+    if (userRunsInLastHour >= limitHour || userRunsInLastDay >= limitDay) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      });
+      const msg = userRunsInLastHour >= limitHour 
+        ? `Rate limit exceeded under rush conditions. You can only run ${limitHour} research sessions per hour.`
+        : `Rate limit exceeded under rush conditions. You can only run ${limitDay} research sessions per day.`;
+      
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ message: msg })}\n\n`);
+      res.end();
+      return;
+    }
+  }
+  
+  // Register this run
+  globalRuns.push({ userId, timestamp: now });
 
   // Set SSE Headers
   res.writeHead(200, {
@@ -978,12 +1254,14 @@ app.get("/api/research/stream", authenticateUser, async (req: any, res) => {
           const fallbackRes = await callGeminiWithRetry({
             model: "gemini-3.5-flash",
             contents: `You are an expert academic research simulator.
-Generate at least 15 high-fidelity primary source research titles on the query: "${currentQuery}".
-For each title, construct a valid working link to search Google Scholar or arXiv for that specific paper.
-You MUST format the URL exactly like one of these working search URLs to avoid 404 errors:
+List at least 15 well-known, highly-cited primary source papers relevant to: "${currentQuery}".
+Only include papers you are highly confident actually exist with the exact title and authors you specify — prefer foundational or frequently-cited works over obscure or recent ones, since you are more likely to have accurate metadata for them.
+
+For each paper, do NOT guess a direct document URL (e.g. /abs/1234.56789) — you cannot verify these and they will 404.
+Instead, provide a Google Scholar or arXiv SEARCH link built from the exact paper title, formatted like:
 - "https://scholar.google.com/scholar?q=Title+Of+The+Paper+URL+Encoded"
 - "https://arxiv.org/search/?query=Title+Of+The+Paper+URL+Encoded&searchtype=all"
-Do not generate fake specific document paths (like /abs/2402.example) which result in 404 errors.
+
 Respond strictly in JSON array format:
 [
   { "title": "Authoritative Document or Paper Title", "url": "https://scholar.google.com/scholar?q=..." }
@@ -1113,16 +1391,19 @@ Output NO other text. Only JSON.`,
         continue;
       }
 
+      // Verify and correct URLs to avoid broken/404 links before auditing
+      rawResearch = await verifyAndCorrectSources(rawResearch);
+
       sendEvent("raw_research", rawResearch);
       sendEvent("state", { agent: "Critic", step: `Auditing Cycle ${loopCount}`, message: `Engaging fact-checkers to evaluate credibility of ${rawResearch.length} gathered sources...` });
 
-      // Run parallel audits (Critic Node)
-      const auditPromises = rawResearch.map(async (src) => {
+      // Run parallel audits (Critic Node) with concurrency limit of 3
+      const auditFactories = rawResearch.map((src) => async () => {
         const audit = await auditSource(topic, src);
         return { ...src, ...audit };
       });
 
-      const auditedItems = await Promise.all(auditPromises);
+      const auditedItems = await limitConcurrency(auditFactories, 3);
 
       // Mutate state with validated assets
       for (const item of auditedItems) {
@@ -1653,7 +1934,7 @@ Please format your response strictly in the following Markdown layout:
 [value]`;
 
     let analysisMarkdown = "";
-    if (!apiKey || apiKey === "MOCK_KEY") {
+    if (!isGeminiKeyConfigured) {
       console.log("[PDF Analyst Engine] Using high-fidelity mock fallback (API key not configured).");
       analysisMarkdown = generateMockPdfAnalysis(fileName, projectTag, year);
     } else {
@@ -1773,7 +2054,7 @@ Ongoing Chat Guidelines (The Tutor Mode):
     console.log(`[PDF Tutor Mode] Answering question for PDF: ${reportId}`);
 
     let tutorReply = "";
-    if (!apiKey || apiKey === "MOCK_KEY") {
+    if (!isGeminiKeyConfigured) {
       let extractedTitle = "Research Paper";
       const metadataPath = path.join(targetDir, `${reportId}.json`);
       if (fs.existsSync(metadataPath)) {
