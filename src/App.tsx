@@ -130,29 +130,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore specific to this authenticated user
+  // Fetch Reports list from backend specific to this authenticated user
   useEffect(() => {
     if (!user) {
       setReports([]);
       return;
     }
-
-    const q = query(
-      collection(db, "users", user.uid, "researches"),
-      orderBy("timestamp", "desc")
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list: ReportMetadata[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as ReportMetadata);
-      });
-      setReports(list);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/researches`);
-    });
-
-    return () => unsubscribe();
+    fetchReports();
   }, [user]);
 
   // ==========================================
@@ -243,7 +227,15 @@ export default function App() {
 
   const fetchReports = async () => {
     try {
-      const res = await fetch("/api/reports");
+      const token = localStorage.getItem("argus_auth_token");
+      const res = await fetch("/api/reports", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch reports: ${res.status}`);
+      }
       const list = await res.json();
       setReports(list);
     } catch (err) {
@@ -327,18 +319,8 @@ export default function App() {
         eventSource.close();
         setIsSearching(false);
         
-        if (user) {
-          const docRef = doc(db, "users", user.uid, "researches", data.id);
-          setDoc(docRef, data)
-            .then(() => {
-              setActiveReport(data);
-            })
-            .catch((err) => {
-              handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/researches/${data.id}`);
-            });
-        } else {
-          setActiveReport(data);
-        }
+        setActiveReport(data);
+        fetchReports();
       } catch (err) {
         console.error(err);
       }
