@@ -221,46 +221,25 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
       } catch (err: any) {
         lastError = err;
         const errMsg = err.message || "";
-        const errMsgLower = errMsg.toLowerCase();
         
-        // Check for quota or rate limits
-        const isQuotaOrRateLimit = 
-          errMsg.includes("429") || 
-          errMsgLower.includes("quota") || 
-          errMsg.includes("RESOURCE_EXHAUSTED");
-          
-        const isRetryableError = 
-          isQuotaOrRateLimit ||
-          errMsgLower.includes("fetch failed") ||
-          errMsgLower.includes("timeout") ||
-          errMsgLower.includes("econnreset") ||
-          errMsgLower.includes("conn") ||
-          errMsgLower.includes("socket") ||
-          errMsgLower.includes("headers") ||
-          errMsgLower.includes("500") ||
-          errMsgLower.includes("502") ||
-          errMsgLower.includes("503") ||
-          errMsgLower.includes("504");
+        let rotated = false;
+        if (geminiKeys.length > 1) {
+          const oldIndex = activeGeminiKeyIndex;
+          activeGeminiKeyIndex = (activeGeminiKeyIndex + 1) % geminiKeys.length;
+          console.log(`[Gemini Rotation] Error encountered: "${errMsg}". Rotating key from index ${oldIndex} to ${activeGeminiKeyIndex}.`);
+          rotated = true;
+        }
         
-        if (isRetryableError) {
-          let rotated = false;
-          if (isQuotaOrRateLimit && geminiKeys.length > 1) {
-            const oldIndex = activeGeminiKeyIndex;
-            activeGeminiKeyIndex = (activeGeminiKeyIndex + 1) % geminiKeys.length;
-            console.log(`[Gemini Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeGeminiKeyIndex}.`);
-            rotated = true;
+        if (i < maxAttempts - 1) {
+          // If we rotated to a new key, retry instantly. Otherwise wait with backoff.
+          const waitTime = rotated ? 0 : delay * Math.pow(2, i);
+          if (waitTime > 0) {
+            console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${maxAttempts})...`);
+            await new Promise((resolve) => setTimeout(resolve, waitTime));
+          } else {
+            console.log(`[Gemini Rotation] Retrying instantly with rotated key...`);
           }
-          if (i < maxAttempts - 1) {
-            // If we rotated to a new key, retry instantly. Otherwise wait with backoff.
-            const waitTime = rotated ? 0 : delay * Math.pow(2, i);
-            if (waitTime > 0) {
-              console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${maxAttempts})...`);
-              await new Promise((resolve) => setTimeout(resolve, waitTime));
-            } else {
-              console.log(`[Gemini Rotation] Retrying instantly with rotated key...`);
-            }
-            continue;
-          }
+          continue;
         }
         
         break; // If not a retryable error or we completed our retries, stop this model's retry loop and try the next fallback model
@@ -313,20 +292,20 @@ async function generateContentWithGroq(prompt: string, systemInstruction?: strin
       return data.choices?.[0]?.message?.content || "";
     } catch (err: any) {
       lastError = err;
-      const isQuotaOrRateLimit = err.status === 429 || (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("quota")));
+      const errMsg = err.message || "";
       
       let rotated = false;
-      if (isQuotaOrRateLimit && groqKeys.length > 1) {
+      if (groqKeys.length > 1) {
         const oldIndex = activeGroqKeyIndex;
         activeGroqKeyIndex = (activeGroqKeyIndex + 1) % groqKeys.length;
-        console.log(`[Groq Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeGroqKeyIndex}.`);
+        console.log(`[Groq Rotation] Error encountered: "${errMsg}". Rotating key from index ${oldIndex} to ${activeGroqKeyIndex}.`);
         rotated = true;
       }
       
       if (i < maxAttempts - 1) {
         const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
         if (waitTime > 0) {
-          console.warn(`[Groq SDK Warning] Rate limit hit. Retrying in ${waitTime}ms...`);
+          console.warn(`[Groq SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
           await new Promise((resolve) => setTimeout(resolve, waitTime));
         } else {
           console.log(`[Groq Rotation] Retrying instantly with rotated key...`);
@@ -383,20 +362,20 @@ async function generateContentWithOpenRouter(prompt: string, systemInstruction?:
       return data.choices?.[0]?.message?.content || "";
     } catch (err: any) {
       lastError = err;
-      const isQuotaOrRateLimit = err.status === 429 || (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("quota")));
+      const errMsg = err.message || "";
       
       let rotated = false;
-      if (isQuotaOrRateLimit && openrouterKeys.length > 1) {
+      if (openrouterKeys.length > 1) {
         const oldIndex = activeOpenRouterKeyIndex;
         activeOpenRouterKeyIndex = (activeOpenRouterKeyIndex + 1) % openrouterKeys.length;
-        console.log(`[OpenRouter Rotation] Rate limit or quota hit. Rotating key from index ${oldIndex} to ${activeOpenRouterKeyIndex}.`);
+        console.log(`[OpenRouter Rotation] Error encountered: "${errMsg}". Rotating key from index ${oldIndex} to ${activeOpenRouterKeyIndex}.`);
         rotated = true;
       }
       
       if (i < maxAttempts - 1) {
         const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
         if (waitTime > 0) {
-          console.warn(`[OpenRouter SDK Warning] Rate limit hit. Retrying in ${waitTime}ms...`);
+          console.warn(`[OpenRouter SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
           await new Promise((resolve) => setTimeout(resolve, waitTime));
         } else {
           console.log(`[OpenRouter Rotation] Retrying instantly with rotated key...`);
