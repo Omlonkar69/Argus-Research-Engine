@@ -1939,6 +1939,7 @@ app.post("/api/pdf/tutor", authenticateUser, async (req: any, res) => {
 
     const targetDir = path.join(process.cwd(), "saved_reports", req.userId);
     const pdfPath = path.join(targetDir, `${reportId}.pdf`);
+    const jsonPath = path.join(targetDir, `${reportId}.json`);
     const chatPath = path.join(targetDir, `${reportId}_chat.json`);
 
     if (!fs.existsSync(pdfPath)) {
@@ -1953,19 +1954,35 @@ app.post("/api/pdf/tutor", authenticateUser, async (req: any, res) => {
       } catch (_) {}
     }
 
-    // Read PDF file data into base64
+    // Read PDF file data into base64 (for Gemini fallback)
     const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
 
-    const systemInstruction = `You are an expert Research Paper Analyst acting as a dedicated sandbox for the attached research paper.
+    // Load metadata/extracted analysis for Groq/OpenRouter context
+    let extractedAnalysis = "No extracted analysis report context available.";
+    let extractedTitle = "Research Paper";
+    if (fs.existsSync(jsonPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+        extractedAnalysis = meta.analysis || extractedAnalysis;
+        extractedTitle = meta.topic || extractedTitle;
+      } catch (_) {}
+    }
+
+    const systemInstruction = `You are an expert Research Paper Analyst acting as a dedicated sandbox for the research paper: "${extractedTitle}".
 Your job is to act as an interactive, highly patient tutor for any follow-up questions about this specific paper.
 
-Ongoing Chat Guidelines (The Tutor Mode):
-- **Source Truth:** Always ground your answers in the attached paper first. If you must use outside knowledge to explain a concept, explicitly state so.
-- **Adaptability:** Be prepared to break down complex engineering concepts simply (e.g., "Explain it like I am 7 years old") when requested.
-- **No Hallucinations:** If a specific technical detail or mechanism isn't explicitly mentioned in the paper, say "The paper does not detail this specific mechanism."
-- **Direct Answers Only:** Answer the user's questions directly. Do not include meta-language, introductory sentences, or prefix phrases like "The reply to your question is...", "Based on the paper, here is the answer:", "To answer your question...", or similar. Start the answer immediately.`;
+Paper Analysis Context:
+${extractedAnalysis}
 
-    // Construct Gemini contents array
+Guidelines:
+- **Source Truth:** Always ground your answers in the provided paper context first. If you must use outside knowledge to explain a concept, explicitly state so.
+- **Adaptability:** Be prepared to break down complex engineering concepts simply (e.g., "Explain it like I am 7 years old") when requested.
+- **No Hallucinations:** If a specific technical detail or mechanism isn't explicitly mentioned in the paper, say "The paper analysis does not detail this specific mechanism."
+- **Direct Answers Only:** Answer the user's questions directly. Do not include meta-language, introductory sentences, or prefix phrases like "Based on the paper, here is the answer:", "To answer your question...", or similar. Start the answer immediately.`;
+
+    const userMsg = message.trim();
+
+    // Construct Gemini contents array (including the PDF file binary)
     const contents: any[] = [
       {
         inlineData: {
@@ -1974,61 +1991,90 @@ Ongoing Chat Guidelines (The Tutor Mode):
         },
       },
     ];
-
-    // Add chat history messages using SDK format (role must be 'user' or 'model')
     for (const msg of chatHistory.messages) {
       contents.push({
         role: msg.role === "user" ? "user" : "model",
         parts: [{ text: msg.content }],
       });
     }
-
-    // Add new user message
     contents.push({
       role: "user",
-      parts: [{ text: message }],
+      parts: [{ text: userMsg }],
     });
 
     console.log(`[PDF Tutor Mode] Answering question for PDF: ${reportId}`);
 
     let tutorReply = "";
-    if (!isGeminiKeyConfigured) {
-      let extractedTitle = "Research Paper";
-      const metadataPath = path.join(targetDir, `${reportId}.json`);
-      if (fs.existsSync(metadataPath)) {
-        try {
-          const meta = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-          extractedTitle = meta.topic || "Research Paper";
-        } catch (_) {}
+
+    // Priority order: 1. Groq, 2. OpenRouter, 3. Gemini
+    if (process.env.GROQ_API_KEY) {
+      try {
+        const conversationPrompt = `Here is the conversation history:\n${chatHistory.messages.map(m => `${m.role === 'user' ? 'User' : 'Tutor'}: ${m.content}`).join('\n')}\n\nUser: ${userMsg}\n\nTutor:`;
+        tutorReply = await generateContentWithGroq(conversationPrompt, systemInstruction);
+      } catch (groqErr: any) {
+        console.warn("Groq PDF tutor failed, trying OpenRouter fallback:", groqErr.message);
+        if (process.env.OPENROUTER_API_KEY) {
+          try {
+            const conversationPrompt = `Here is the conversation history:\n${chatHistory.messages.map(m => `${m.role === 'user' ? 'User' : 'Tutor'}: ${m.content}`).join('\n')}\n\nUser: ${userMsg}\n\nTutor:`;
+            tutorReply = await generateContentWithOpenRouter(conversationPrompt, systemInstruction);
+          } catch (orErr: any) {
+            console.warn("OpenRouter PDF tutor fallback failed, trying Gemini:", orErr.message);
+            if (isGeminiKeyConfigured) {
+              const geminiRes = await callGeminiWithRetry({
+                model: "gemini-2.5-flash",
+                contents,
+                config: { systemInstruction }
+              });
+              tutorReply = geminiRes.text || "";
+            }
+          }
+        } else if (isGeminiKeyConfigured) {
+          try {
+            const geminiRes = await callGeminiWithRetry({
+              model: "gemini-2.5-flash",
+              contents,
+              config: { systemInstruction }
+            });
+            tutorReply = geminiRes.text || "";
+          } catch (_) {}
+        }
       }
-      console.log("[PDF Tutor Mode] Using simulated tutor response (API key not configured).");
-      tutorReply = generateMockTutorReply(message, extractedTitle);
-    } else {
+    } else if (process.env.OPENROUTER_API_KEY) {
+      try {
+        const conversationPrompt = `Here is the conversation history:\n${chatHistory.messages.map(m => `${m.role === 'user' ? 'User' : 'Tutor'}: ${m.content}`).join('\n')}\n\nUser: ${userMsg}\n\nTutor:`;
+        tutorReply = await generateContentWithOpenRouter(conversationPrompt, systemInstruction);
+      } catch (orErr: any) {
+        console.warn("OpenRouter PDF tutor failed, trying Gemini:", orErr.message);
+        if (isGeminiKeyConfigured) {
+          try {
+            const geminiRes = await callGeminiWithRetry({
+              model: "gemini-2.5-flash",
+              contents,
+              config: { systemInstruction }
+            });
+            tutorReply = geminiRes.text || "";
+          } catch (_) {}
+        }
+      }
+    } else if (isGeminiKeyConfigured) {
       try {
         const geminiRes = await callGeminiWithRetry({
           model: "gemini-2.5-flash",
           contents,
-          config: {
-            systemInstruction,
-          },
+          config: { systemInstruction }
         });
-        tutorReply = geminiRes.text || "I was unable to analyze the document for this query.";
-      } catch (err: any) {
-        console.warn("[PDF Tutor Mode] Gemini API failed. Engaging simulated tutor response. Error:", err.message);
-        let extractedTitle = "Research Paper";
-        const metadataPath = path.join(targetDir, `${reportId}.json`);
-        if (fs.existsSync(metadataPath)) {
-          try {
-            const meta = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-            extractedTitle = meta.topic || "Research Paper";
-          } catch (_) {}
-        }
-        tutorReply = generateMockTutorReply(message, extractedTitle);
-      }
+        tutorReply = geminiRes.text || "";
+      } catch (_) {}
+    }
+
+    // Ultimate fallback if all APIs are unavailable or failed: Mock Response
+    if (!tutorReply) {
+      console.log("[PDF Tutor Mode] All APIs failed or unconfigured. Engaging simulated tutor response.");
+      tutorReply = generateMockTutorReply(userMsg, extractedTitle);
     }
 
     // Save updated chat history
-    chatHistory.messages.push({ role: "user", content: message });
+    chatHistory.messages.push({ role: "user", content: userMsg });
     chatHistory.messages.push({ role: "model", content: tutorReply });
 
     fs.writeFileSync(chatPath, JSON.stringify(chatHistory, null, 2));
