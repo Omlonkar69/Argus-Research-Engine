@@ -170,12 +170,18 @@ const openrouterKeys: string[] = (process.env.OPENROUTER_API_KEYS || process.env
 
 if (geminiKeys.length === 0) {
   console.warn("WARNING: No Gemini API keys found. Please configure GEMINI_API_KEYS or GEMINI_API_KEY.");
+} else {
+  console.log(`[Startup] Loaded ${geminiKeys.length} Gemini API keys for rotation.`);
 }
 if (groqKeys.length === 0) {
   console.warn("WARNING: No Groq API keys found. Please configure GROQ_API_KEYS or GROQ_API_KEY.");
+} else {
+  console.log(`[Startup] Loaded ${groqKeys.length} Groq API keys for rotation.`);
 }
 if (openrouterKeys.length === 0) {
   console.warn("WARNING: No OpenRouter API keys found. Please configure OPENROUTER_API_KEYS or OPENROUTER_API_KEY.");
+} else {
+  console.log(`[Startup] Loaded ${openrouterKeys.length} OpenRouter API keys for rotation.`);
 }
 
 let activeGeminiKeyIndex = 0;
@@ -210,8 +216,8 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
     // Don't modify original params object
     const currentParams = { ...params, model: currentModel };
     
-    // Try at least as many times as we have keys plus extra retries
-    const maxAttempts = Math.max(retries, geminiKeys.length);
+    // Try at least 3 times the number of keys to allow keys to cool down and be retried
+    const maxAttempts = Math.max(retries, geminiKeys.length * 3);
     
     for (let i = 0; i < maxAttempts; i++) {
       try {
@@ -231,14 +237,10 @@ async function callGeminiWithRetry(params: any, retries = 4, delay = 1500): Prom
         }
         
         if (i < maxAttempts - 1) {
-          // If we rotated to a new key, retry instantly. Otherwise wait with backoff.
-          const waitTime = rotated ? 0 : delay * Math.pow(2, i);
-          if (waitTime > 0) {
-            console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${maxAttempts})...`);
-            await new Promise((resolve) => setTimeout(resolve, waitTime));
-          } else {
-            console.log(`[Gemini Rotation] Retrying instantly with rotated key...`);
-          }
+          // If we rotated, wait 1200ms to allow IP-based rate limits to cool down. If we didn't rotate, use exponential backoff.
+          const waitTime = rotated ? 1200 : delay * Math.pow(2, i);
+          console.warn(`[Gemini SDK Warning] Transient error or rate limit hit ("${errMsg}"). Retrying in ${waitTime}ms (Attempt ${i + 1}/${maxAttempts})...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
         }
         
@@ -258,7 +260,7 @@ async function generateContentWithGroq(prompt: string, systemInstruction?: strin
   }
   messages.push({ role: "user", content: prompt });
 
-  const maxAttempts = Math.max(3, groqKeys.length);
+  const maxAttempts = Math.max(3, groqKeys.length * 3);
   let lastError: any = null;
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -303,13 +305,9 @@ async function generateContentWithGroq(prompt: string, systemInstruction?: strin
       }
       
       if (i < maxAttempts - 1) {
-        const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
-        if (waitTime > 0) {
-          console.warn(`[Groq SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-        } else {
-          console.log(`[Groq Rotation] Retrying instantly with rotated key...`);
-        }
+        const waitTime = rotated ? 1200 : 1000 * Math.pow(2, i);
+        console.warn(`[Groq SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
         continue;
       }
     }
@@ -326,7 +324,7 @@ async function generateContentWithOpenRouter(prompt: string, systemInstruction?:
   }
   messages.push({ role: "user", content: prompt });
 
-  const maxAttempts = Math.max(3, openrouterKeys.length);
+  const maxAttempts = Math.max(3, openrouterKeys.length * 3);
   let lastError: any = null;
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -373,13 +371,9 @@ async function generateContentWithOpenRouter(prompt: string, systemInstruction?:
       }
       
       if (i < maxAttempts - 1) {
-        const waitTime = rotated ? 0 : 1000 * Math.pow(2, i);
-        if (waitTime > 0) {
-          console.warn(`[OpenRouter SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-        } else {
-          console.log(`[OpenRouter Rotation] Retrying instantly with rotated key...`);
-        }
+        const waitTime = rotated ? 1200 : 1000 * Math.pow(2, i);
+        console.warn(`[OpenRouter SDK Warning] Request failed. Retrying in ${waitTime}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
         continue;
       }
     }
