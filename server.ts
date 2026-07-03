@@ -796,9 +796,27 @@ app.get("/api/reports/:id/audio", authenticateUser, (req: any, res) => {
       fileBuffer = addWavHeader(fileBuffer, 24000);
     }
 
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Length", fileBuffer.length);
-    res.send(fileBuffer);
+    const range = req.headers.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileBuffer.length - 1;
+      const chunksize = (end - start) + 1;
+      const chunk = fileBuffer.slice(start, end + 1);
+      
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${fileBuffer.length}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunksize,
+        "Content-Type": "audio/wav"
+      });
+      res.end(chunk);
+    } else {
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("Content-Length", fileBuffer.length);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.send(fileBuffer);
+    }
   } catch (err: any) {
     res.status(500).send(err.message);
   }
