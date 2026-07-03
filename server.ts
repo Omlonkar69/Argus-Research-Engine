@@ -1062,9 +1062,7 @@ async function limitConcurrency<T>(
   const workers = Array.from({ length: Math.min(limit, factories.length) }, worker);
   await Promise.all(workers);
   return results;
-}
-
-// Helper: Check if a URL is accessible and does not return 404
+}// Helper: Check if a URL is accessible and does not return 404
 async function isUrlAccessible(url: string): Promise<boolean> {
   if (!url || !url.startsWith("http")) return false;
   
@@ -1088,7 +1086,7 @@ async function isUrlAccessible(url: string): Promise<boolean> {
 
   try {
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+    const id = setTimeout(() => controller.abort(), 800); // 800ms ultra-fast timeout
 
     const res = await fetch(url, {
       method: "HEAD",
@@ -1105,23 +1103,7 @@ async function isUrlAccessible(url: string): Promise<boolean> {
     }
     return true;
   } catch (err) {
-    // Fallback to a fast GET if HEAD is rejected or blocked
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 2500); // 2.5-second timeout
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Range": "bytes=0-1024"
-        },
-        signal: controller.signal
-      });
-      clearTimeout(id);
-      return res.status !== 404;
-    } catch {
-      return false;
-    }
+    return false; // Fail fast and fallback immediately
   }
 }
 
@@ -1130,20 +1112,21 @@ async function verifyAndCorrectSources(
   sources: { title: string; url: string }[]
 ): Promise<{ title: string; url: string }[]> {
   console.log(`[URL Verification] Initiating access audits on ${sources.length} sources...`);
-  const verifyFactories = sources.map((src) => async () => {
-    const isAccessible = await isUrlAccessible(src.url);
-    if (!isAccessible) {
-      const fallbackUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(src.title)}`;
-      console.log(`[URL Verification] URL "${src.url}" is invalid or returned 404. Mapping to fallback: "${fallbackUrl}"`);
-      return {
-        title: src.title,
-        url: fallbackUrl
-      };
-    }
-    return src;
-  });
-  
-  return await limitConcurrency(verifyFactories, 5);
+  // Run all checks in parallel to eliminate timeout accumulation
+  return await Promise.all(
+    sources.map(async (src) => {
+      const isAccessible = await isUrlAccessible(src.url);
+      if (!isAccessible) {
+        const fallbackUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(src.title)}`;
+        console.log(`[URL Verification] URL "${src.url}" is invalid or timed out. Mapping to fallback: "${fallbackUrl}"`);
+        return {
+          title: src.title,
+          url: fallbackUrl
+        };
+      }
+      return src;
+    })
+  );
 }
 
 interface ResearchRun {
@@ -1397,13 +1380,13 @@ Output NO other text. Only JSON.`,
       sendEvent("raw_research", rawResearch);
       sendEvent("state", { agent: "Critic", step: `Auditing Cycle ${loopCount}`, message: `Engaging fact-checkers to evaluate credibility of ${rawResearch.length} gathered sources...` });
 
-      // Run parallel audits (Critic Node) with concurrency limit of 3
+      // Run parallel audits (Critic Node) with concurrency limit of 5
       const auditFactories = rawResearch.map((src) => async () => {
         const audit = await auditSource(topic, src);
         return { ...src, ...audit };
       });
 
-      const auditedItems = await limitConcurrency(auditFactories, 3);
+      const auditedItems = await limitConcurrency(auditFactories, 5);
 
       // Mutate state with validated assets
       for (const item of auditedItems) {
