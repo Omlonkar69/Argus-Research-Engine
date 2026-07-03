@@ -1103,22 +1103,8 @@ async function isUrlAccessible(url: string): Promise<boolean> {
 async function verifyAndCorrectSources(
   sources: { title: string; url: string }[]
 ): Promise<{ title: string; url: string }[]> {
-  console.log(`[URL Verification] Initiating access audits on ${sources.length} sources...`);
-  // Run all checks in parallel to eliminate timeout accumulation
-  return await Promise.all(
-    sources.map(async (src) => {
-      const isAccessible = await isUrlAccessible(src.url);
-      if (!isAccessible) {
-        const fallbackUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(src.title)}`;
-        console.log(`[URL Verification] URL "${src.url}" is invalid or timed out. Mapping to fallback: "${fallbackUrl}"`);
-        return {
-          title: src.title,
-          url: fallbackUrl
-        };
-      }
-      return src;
-    })
-  );
+  console.log(`[URL Verification] Preserving all ${sources.length} original research paper links directly.`);
+  return sources;
 }
 
 interface ResearchRun {
@@ -1610,7 +1596,7 @@ CRITICAL INSTRUCTIONS:
 - You MUST NOT output or read aloud any markdown, section headers, headings, metadata (like Title, Authors, Journal, Volume, Issue, Year, Keywords), or label tags (like "Chat Title", "Objective of paper", "What type of paper is this", "Specific details of solution", "Target audience", "Application Type", "Setting / Testing Environment", "Research Design / Methodology", "Key findings", "Limitations", "Takeaways", "Final Reference Citation").
 - Do NOT say "equal to equal to" or include any equal signs (like === or ===) or other formatting symbols.
 - You must rewrite the content so that it flows naturally in complete, narrative paragraphs, smoothly transitioning between topics (for example: instead of saying "Key findings: 10x throughput scaling", say "The key findings of this research indicate a significant ten-times throughput scaling...").
-- Keep the script informative, engaging, and structured to take approximately 2 to 3 minutes to read aloud (around 300 to 450 words).
+- Keep the script informative, engaging, and structured to take approximately 1.5 to 2 minutes to read aloud (around 200 to 300 words).
 - Make sure to cover all core details, objective, methodology, findings, limitations, and takeaways from the summary.
 - The output MUST be strictly plain text, with no markdown, asterisks, brackets, headers, or bullet points, ready to be read aloud.
 
@@ -1635,64 +1621,29 @@ ${briefingSummary}`;
     let base64Audio = "";
     
     try {
-      // Split speechText into sentences
-      const sentences = speechText.match(/[^.!?]+[.!?]+/g) || [speechText];
-      // Group sentences so they are around 150-250 characters each (optimal length for TTS preview)
-      const ttsChunks: string[] = [];
-      let currentChunk = "";
-      for (const sentence of sentences) {
-        if ((currentChunk + sentence).length > 250) {
-          if (currentChunk.trim()) {
-            ttsChunks.push(currentChunk.trim());
-          }
-          currentChunk = sentence;
-        } else {
-          currentChunk += (currentChunk ? " " : "") + sentence;
-        }
-      }
-      if (currentChunk.trim()) {
-        ttsChunks.push(currentChunk.trim());
-      }
-
-      console.log(`[Audio Engine] Synthesizing ${ttsChunks.length} text chunks to audio...`);
-      let combinedPcm = Buffer.alloc(0);
-
-      for (let i = 0; i < ttsChunks.length; i++) {
-        const chunk = ttsChunks[i];
-        console.log(`[Audio Engine] Synthesizing chunk ${i + 1}/${ttsChunks.length} (${chunk.length} chars)`);
-        
-        try {
-          const ttsRes = await callGeminiWithRetry({
-            model: "gemini-3.1-flash-tts-preview",
-            contents: [{ parts: [{ text: chunk }] }],
-            config: {
-              responseModalities: [Modality.AUDIO],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: "Kore" }, // Elegant premium speaker voice
-                },
-              },
+      console.log(`[Audio Engine] Synthesizing entire text summary to audio in a single request (${speechText.length} chars)...`);
+      
+      const ttsRes = await callGeminiWithRetry({
+        model: "gemini-3.1-flash-tts-preview",
+        contents: [{ parts: [{ text: speechText }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Kore" }, // Elegant premium speaker voice
             },
-          }, 2, 1000); // 2 retries, 1000ms delay to allow rotation cooldown
+          },
+        },
+      }, 3, 1500); // 3 retries, 1500ms delay to allow rotation cooldown
 
-          const chunkBase64 = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
-          if (chunkBase64) {
-            const chunkBuffer = Buffer.from(chunkBase64, "base64");
-            combinedPcm = Buffer.concat([combinedPcm, chunkBuffer]);
-          }
-        } catch (chunkErr: any) {
-          console.warn(`[Audio Engine] Synthesizing chunk ${i + 1} failed. Skipping this chunk:`, chunkErr);
-          sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis rate-limited or failed on chunk ${i + 1}. Bypassing chunk to continue.` });
-          continue; // Skip only this chunk, continue to synthesize other chunks to prevent incomplete files
-        }
-      }
-
-      if (combinedPcm.length > 0) {
-        base64Audio = combinedPcm.toString("base64");
+      const audioBase64 = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+      if (audioBase64) {
+        base64Audio = audioBase64;
+        console.log(`[Audio Engine] Successfully synthesized entire audio file.`);
       }
     } catch (ttsErr: any) {
       console.error("Audio Post-Processing Synthesis error:", ttsErr);
-      sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis bypassed safely or partially completed. Error: ${ttsErr.message}` });
+      sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis bypassed safely. Error: ${ttsErr.message}` });
     }
 
     // Persist finalized outputs
