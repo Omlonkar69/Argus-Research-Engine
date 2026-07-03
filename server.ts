@@ -810,12 +810,31 @@ function sanitizeForSpeech(markdown: string): string {
   return markdown
     .replace(/<br\s*\/?>/gi, " ") // Remove HTML line breaks
     .replace(/#{1,6}\s+/g, "") // Remove headers
-    .replace(/[*_`~]/g, "") // Remove bold, italic, code markers
+    .replace(/[*_`~=]/g, "") // Remove bold, italic, code markers, equals signs
     .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1") // Simplify links
     .replace(/!\[[^\]]*\]\([^\)]+\)/g, "") // Remove images
     .replace(/- \s*/g, "") // Remove bullet items
     .replace(/\d+\.\s*/g, "") // Remove numbering
-    .replace(/\n+/g, " ") // Single space lines
+    // Strip common schema headings and labels to prevent reading them aloud
+    .replace(/Chat Title:[^\n]*/gi, "")
+    .replace(/Title of the Paper:[^\n]*/gi, "")
+    .replace(/Author\(s\):[^\n]*/gi, "")
+    .replace(/Journal:[^\n]*/gi, "")
+    .replace(/Volume, Issue, Year:[^\n]*/gi, "")
+    .replace(/Keywords:[^\n]*/gi, "")
+    .replace(/Objective of paper \/ Problem addressed:/gi, "")
+    .replace(/What type of paper is this:/gi, "")
+    .replace(/Specific details of solution:/gi, "")
+    .replace(/Target audience:/gi, "")
+    .replace(/Application Type:/gi, "")
+    .replace(/Setting \/ Testing Environment:/gi, "")
+    .replace(/Research Design \/ Methodology \/ Flow of work:/gi, "")
+    .replace(/Key findings:/gi, "")
+    .replace(/Limitations of paper:/gi, "")
+    .replace(/Takeaways \/ Points relevant to my Project:/gi, "")
+    .replace(/Final Reference Citation:/gi, "")
+    .replace(/\n+/g, " ") // Collapse lines
+    .replace(/\s+/g, " ") // Collapse multiple spaces
     .trim();
 }
 
@@ -1585,9 +1604,15 @@ ${finalReport}`;
 
     let speechText = "";
     try {
-      const vocalPrompt = `You are a professional voiceover narrator. Rewrite the following executive research summary into a flowing, engaging, conversational narrative script. 
-Ensure you include all the core details, objective, methodology, findings, limitations, and takeaways from the summary. 
-Do NOT include markdown, headers, bullets, or brackets. The output must be plain text ready to be read aloud.
+      const vocalPrompt = `You are a professional voiceover narrator. Rewrite the following executive research summary on the topic "${topic}" into a highly professional, flowing, continuous conversational voice briefing.
+      
+CRITICAL INSTRUCTIONS:
+- You MUST NOT output or read aloud any markdown, section headers, headings, metadata (like Title, Authors, Journal, Volume, Issue, Year, Keywords), or label tags (like "Chat Title", "Objective of paper", "What type of paper is this", "Specific details of solution", "Target audience", "Application Type", "Setting / Testing Environment", "Research Design / Methodology", "Key findings", "Limitations", "Takeaways", "Final Reference Citation").
+- Do NOT say "equal to equal to" or include any equal signs (like === or ===) or other formatting symbols.
+- You must rewrite the content so that it flows naturally in complete, narrative paragraphs, smoothly transitioning between topics (for example: instead of saying "Key findings: 10x throughput scaling", say "The key findings of this research indicate a significant ten-times throughput scaling...").
+- Keep the script informative, engaging, and structured to take approximately 2 to 3 minutes to read aloud (around 300 to 450 words).
+- Make sure to cover all core details, objective, methodology, findings, limitations, and takeaways from the summary.
+- The output MUST be strictly plain text, with no markdown, asterisks, brackets, headers, or bullet points, ready to be read aloud.
 
 Executive summary:
 ${briefingSummary}`;
@@ -1648,7 +1673,7 @@ ${briefingSummary}`;
                 },
               },
             },
-          }, 1, 500); // Fail fast: 1 attempt, 500ms delay
+          }, 2, 1000); // 2 retries, 1000ms delay to allow rotation cooldown
 
           const chunkBase64 = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
           if (chunkBase64) {
@@ -1656,9 +1681,9 @@ ${briefingSummary}`;
             combinedPcm = Buffer.concat([combinedPcm, chunkBuffer]);
           }
         } catch (chunkErr: any) {
-          console.warn(`[Audio Engine] Synthesizing chunk ${i + 1} failed. Bypassing further audio synthesis to prevent timeout:`, chunkErr);
-          sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis rate-limited or failed. Bypassing remaining audio generation to complete report.` });
-          break; // Exit the loop and continue to save the report
+          console.warn(`[Audio Engine] Synthesizing chunk ${i + 1} failed. Skipping this chunk:`, chunkErr);
+          sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis rate-limited or failed on chunk ${i + 1}. Bypassing chunk to continue.` });
+          continue; // Skip only this chunk, continue to synthesize other chunks to prevent incomplete files
         }
       }
 
