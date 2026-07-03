@@ -1642,23 +1642,29 @@ ${briefingSummary}`;
         const chunk = ttsChunks[i];
         console.log(`[Audio Engine] Synthesizing chunk ${i + 1}/${ttsChunks.length} (${chunk.length} chars)`);
         
-        const ttsRes = await callGeminiWithRetry({
-          model: "gemini-3.1-flash-tts-preview",
-          contents: [{ parts: [{ text: chunk }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: "Kore" }, // Elegant premium speaker voice
+        try {
+          const ttsRes = await callGeminiWithRetry({
+            model: "gemini-3.1-flash-tts-preview",
+            contents: [{ parts: [{ text: chunk }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: "Kore" }, // Elegant premium speaker voice
+                },
               },
             },
-          },
-        });
+          }, 1, 500); // Fail fast: 1 attempt, 500ms delay
 
-        const chunkBase64 = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
-        if (chunkBase64) {
-          const chunkBuffer = Buffer.from(chunkBase64, "base64");
-          combinedPcm = Buffer.concat([combinedPcm, chunkBuffer]);
+          const chunkBase64 = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+          if (chunkBase64) {
+            const chunkBuffer = Buffer.from(chunkBase64, "base64");
+            combinedPcm = Buffer.concat([combinedPcm, chunkBuffer]);
+          }
+        } catch (chunkErr: any) {
+          console.warn(`[Audio Engine] Synthesizing chunk ${i + 1} failed. Bypassing further audio synthesis to prevent timeout:`, chunkErr);
+          sendEvent("log", { agent: "Audio Engine", message: `Audio synthesis rate-limited or failed. Bypassing remaining audio generation to complete report.` });
+          break; // Exit the loop and continue to save the report
         }
       }
 
