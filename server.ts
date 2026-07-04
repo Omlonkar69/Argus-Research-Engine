@@ -996,6 +996,14 @@ Key taxonomies for future investigation:
 * **Taxonomy B (System Integration)**: Expanding APIs to support high-performance distributed configurations.
 `;
 
+  const objectiveText = filteredResearch.length > 0
+    ? `Synthesized analysis on ${topic} to address challenges in: ${filteredResearch.slice(0, 3).map(s => s.title).join(", ")}. This research focuses on optimizing performance, architecture, and empirical parameters.`
+    : `Synthesized academic analysis on the topic of ${topic}. This research reviews the primary engineering constraints, methodologies, and benchmarks to design an optimized, stable framework.`;
+
+  const solutionText = filteredResearch.length > 0
+    ? `Integrated systems leveraging: ${filteredResearch.map(s => s.title).join(", ")}. It evaluates modular processing cores, parallel computing delta routines, and system interfaces.`
+    : `Modular processing core design incorporating parallel computing delta routines, latency tracking interfaces, and robust state engines to optimize operations.`;
+
   const briefingSummary = `# Chat Title: Argus Research ${new Date().getFullYear()} ${topic}
 
 ### Title of the Paper:
@@ -1014,34 +1022,34 @@ Vol 1, Issue 1, ${new Date().getFullYear()}
 ${topic}, synthesis, literature, architecture, analysis
 
 ### Objective of paper / Problem addressed:
-Ingestion of empirical matrices and maintaining deterministic states under varying loads.
+${objectiveText}
 
 ### What type of paper is this:
 Theoretical Framework / Literature Review Synthesis
 
 ### Specific details of solution:
-Modular processing core using parallel computing delta routines.
+${solutionText}
 
 ### Target audience:
-System architects and research engineers.
+System architects, domain researchers, and software engineers interested in ${topic}.
 
 ### Application Type:
-Distributed System / Web Application
+Distributed System / Web Application / Data Analytics / Embedded system targeting ${topic}
 
 ### Setting / Testing Environment:
-Simulated distributed sandbox environment.
+Simulated distributed sandbox environments and audited empirical testbeds.
 
 ### Research Design / Methodology / Flow of work:
-Synthesizing data matrices, running latency tests, and auditing traces.
+Auditing and synthesizing academic literature, running latency tests, and compiling performance comparisons.
 
 ### Key findings:
-Up to 10x throughput scaling and runtime latency below 40ms.
+Discovered advanced scaling mechanisms, latency reduction pathways, and robust validation structures for ${topic}.
 
 ### Limitations of paper:
-Gaps in predictive optimization metrics under highly distributed load margins.
+Gaps in predictive optimization metrics under highly distributed load margins and variable hardware environments.
 
 ### Takeaways / Points relevant to my Project:
-Bridges the gap between theoretical calculations and production environments.
+Bridges the gap between theoretical calculations and production deployment frameworks for ${topic}.
 
 ### Final Reference Citation:
 Argus Synthesis Engine, "Empirical Review on ${topic}," Argus Science Portfolio, ${new Date().getFullYear()}.`;
@@ -1528,9 +1536,12 @@ Compile this full extensive document now. Do not truncate.`;
       sendEvent("state", { agent: "Writer", step: "Briefing Synthesis", message: `Analyzing findings to draft high-efficiency, conversational executive summary brief...` });
 
       const summaryPrompt = `You are an elite academic synthesizer.
-Based on the following comprehensive analysis report on the topic "${topic}", draft a structured summary exactly matching the provided schema. If a specific data point is missing or not applicable, write "Not mentioned" — do not guess or hallucinate.
-
-Do NOT use tables. Format your output strictly in this Markdown layout:
+Based on the following comprehensive analysis report on the topic "${topic}", draft a highly detailed and comprehensive structured summary.
+CRITICAL INSTRUCTIONS:
+- You must write a detailed, thorough explanation for every section of the schema, mixing key findings, theoretical frameworks, architecture designs, and empirical data from the report.
+- Do NOT output short or one-line answers. Each section should be a substantial, informative paragraph that details the report topic thoroughly.
+- If some details are not explicitly present in the report, use relevant context from the report to formulate a comprehensive synthesis rather than writing "Not mentioned" if possible, but keep it accurate to the provided report content.
+- Do NOT use tables. Format your output strictly in this Markdown layout:
 
 # Chat Title: Argus Research ${new Date().getFullYear()} ${topic}
 
@@ -1550,34 +1561,34 @@ Vol 1, Issue 1, ${new Date().getFullYear()}
 [Provide 5 comma-separated keywords for this topic]
 
 ### Objective of paper / Problem addressed:
-[Explain the primary problem or objective addressed in this topic]
+[Provide a comprehensive, detailed overview of the primary problem or objective addressed in this report. Explain the motivations, goals, and challenges analyzed.]
 
 ### What type of paper is this:
 Theoretical Framework / Literature Review Synthesis
 
 ### Specific details of solution:
-[Explain the core solutions, architectures, or mechanisms reviewed]
+[Provide a detailed breakdown of the core solutions, architectures, algorithms, or mechanisms reviewed in the report. Include technical design details.]
 
 ### Target audience:
-[Identify the target end-users or groups interested in this research]
+[Identify and describe the target end-users, organizations, or research groups interested in this topic, and why they benefit.]
 
 ### Application Type:
-[Identify whether this is a Web app / Desktop / Mobile app / Data Analytics / Embedded system / etc.]
+[Identify and elaborate on whether this is a Web app / Desktop / Mobile app / Data Analytics / Embedded system / etc. and explain how it applies to the topic.]
 
 ### Setting / Testing Environment:
-[Describe the settings or testing environments reviewed in the literature]
+[Describe in detail the settings, experimental setups, datasets, or testing environments reviewed in the literature.]
 
 ### Research Design / Methodology / Flow of work:
-[Outline the methodology or architectural phases described in the research]
+[Detail the methodology, flow of work, or architectural phases described in the research report.]
 
 ### Key findings:
-[List the main metric improvements, results, or outcomes]
+[Detail the main metric improvements, results, experimental outcomes, and performance benchmarks reviewed.]
 
 ### Limitations of paper:
-[List the limitations, gaps, or constraints of current research]
+[Analyze and list the limitations, gaps, challenges, or constraints of current research on this topic.]
 
 ### Takeaways / Points relevant to my Project:
-[Detail how these findings inform project architecture and objectives]
+[Provide detailed, actionable takeaways showing how these findings inform project architecture and development objectives.]
 
 ### Final Reference Citation:
 [Provide a formal academic citation summarizing this collective synthesis]
@@ -1599,7 +1610,10 @@ ${finalReport}`;
         }
       } catch (err: any) {
         console.error("Custom briefing synthesis failed, falling back to truncated plain text:", err);
-        briefingSummary = `Executive research briefing on ${topic}. Here is a concise overview of our academic findings. ${sanitizeForSpeech(finalReport.substring(0, 900))}`;
+        const reportSnippet = finalReport.length > 4000
+          ? finalReport.substring(0, 4000) + "..."
+          : finalReport;
+        briefingSummary = `Executive research briefing on ${topic}. Here is a detailed overview of our academic findings: ${sanitizeForSpeech(reportSnippet)}`;
       }
     }
 
@@ -1608,18 +1622,21 @@ ${finalReport}`;
 
     let speechText = "";
     try {
-      const vocalPrompt = `You are a professional voiceover narrator. Rewrite the following executive research summary on the topic "${topic}" into a highly professional, flowing, continuous conversational voice briefing.
+      const vocalPrompt = `You are a professional voiceover narrator. Rewrite the following executive research summary and the full report on the topic "${topic}" into a highly professional, flowing, continuous conversational voice briefing.
       
 CRITICAL INSTRUCTIONS:
 - You MUST NOT output or read aloud any markdown, section headers, headings, metadata (like Title, Authors, Journal, Volume, Issue, Year, Keywords), or label tags (like "Chat Title", "Objective of paper", "What type of paper is this", "Specific details of solution", "Target audience", "Application Type", "Setting / Testing Environment", "Research Design / Methodology", "Key findings", "Limitations", "Takeaways", "Final Reference Citation").
 - Do NOT say "equal to equal to" or include any equal signs (like === or ===) or other formatting symbols.
-- You must rewrite the content so that it flows naturally in complete, narrative paragraphs, smoothly transitioning between topics (for example: instead of saying "Key findings: 10x throughput scaling", say "The key findings of this research indicate a significant ten-times throughput scaling...").
-- Keep the script informative, engaging, and structured to take approximately 1.5 to 2 minutes to read aloud (around 200 to 300 words).
-- Make sure to cover all core details, objective, methodology, findings, limitations, and takeaways from the summary.
+- You must mix the structured summary points and the detailed report findings together so that the narration flows naturally in complete, detailed narrative paragraphs, smoothly transitioning between topics.
+- Keep the script highly informative, detailed, engaging, and structured to take approximately 2 to 3 minutes to read aloud (around 400 to 600 words).
+- Make sure to cover all core details, objectives, methodology, findings, limitations, and takeaways from both the summary and the full report to provide a complete, deep summary of the topic.
 - The output MUST be strictly plain text, with no markdown, asterisks, brackets, headers, or bullet points, ready to be read aloud.
 
 Executive summary:
-${briefingSummary}`;
+${briefingSummary}
+
+Full report to draw details from:
+${finalReport}`;
 
       const vocalRes = await callGeminiWithRetry({
         model: "gemini-3.5-flash",
@@ -1683,6 +1700,7 @@ ${briefingSummary}`;
           removedSources,
           hasAudio: !!base64Audio,
           briefingSummary,
+          speechText,
         },
         null,
         2
@@ -1710,6 +1728,7 @@ ${briefingSummary}`;
       removedSources,
       hasAudio: !!base64Audio,
       briefingSummary,
+      speechText,
       markdownContent: finalReport,
     });
   } catch (err: any) {

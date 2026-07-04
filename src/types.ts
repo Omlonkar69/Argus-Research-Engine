@@ -6,6 +6,7 @@ export interface ReportMetadata {
   removedSources?: { title: string; url: string; reason: string }[];
   hasAudio?: boolean;
   briefingSummary?: string;
+  speechText?: string;
   markdownContent?: string;
   
   // PDF Analyst fields

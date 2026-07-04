@@ -50,9 +50,9 @@ export default function ReportViewer({ report }: ReportViewerProps) {
     window.speechSynthesis.cancel();
     useSynthRef.current = true;
 
-    const textToSpeak = report.briefingSummary
+    const textToSpeak = report.speechText || (report.briefingSummary
       ? report.briefingSummary.replace(/<br\s*\/?>/gi, " ").replace(/[*_#`~]/g, "").trim()
-      : `Executive research summary for ${report.topic}.`;
+      : `Executive research summary for ${report.topic}.`);
     
     synthTextLengthRef.current = textToSpeak.length;
     const words = textToSpeak.split(/\s+/).length;
@@ -276,9 +276,9 @@ export default function ReportViewer({ report }: ReportViewerProps) {
       }
       if (isPlaying) {
         window.speechSynthesis.cancel();
-        const textToSpeak = report.briefingSummary
+        const textToSpeak = report.speechText || (report.briefingSummary
           ? report.briefingSummary.replace(/<br\s*\/?>/gi, " ").replace(/[*_#`~]/g, "").trim()
-          : `Executive research summary for ${report.topic}.`;
+          : `Executive research summary for ${report.topic}.`);
         
         const progressPercent = duration > 0 ? currentTime / duration : 0;
         const startIndex = Math.min(textToSpeak.length - 1, Math.max(0, Math.floor(progressPercent * textToSpeak.length)));
@@ -363,9 +363,9 @@ export default function ReportViewer({ report }: ReportViewerProps) {
 
     if (useSynthRef.current) {
       setCurrentTime(newTime);
-      const textToSpeak = report.briefingSummary
+      const textToSpeak = report.speechText || (report.briefingSummary
         ? report.briefingSummary.replace(/<br\s*\/?>/gi, " ").replace(/[*_#`~]/g, "").trim()
-        : `Executive research summary for ${report.topic}.`;
+        : `Executive research summary for ${report.topic}.`);
       
       const startIndex = Math.min(textToSpeak.length - 1, Math.max(0, Math.floor(percentage * textToSpeak.length)));
       window.speechSynthesis.cancel();
